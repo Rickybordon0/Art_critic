@@ -18,6 +18,7 @@ export default function Admin() {
         const data = new FormData();
         data.append('image', file);
         data.append('title', formData.title);
+        if (formData.slug) data.append('slug', formData.slug);
         data.append('description', formData.description);
         data.append('facts', formData.facts);
 
@@ -60,6 +61,13 @@ export default function Admin() {
                         style={{ padding: '8px' }}
                     />
 
+                    <input
+                        placeholder="Short Name/Slug (e.g., starry-night) - Optional"
+                        value={formData.slug || ''}
+                        onChange={e => setFormData({ ...formData, slug: e.target.value })}
+                        style={{ padding: '8px' }}
+                    />
+
                     <textarea
                         placeholder="Description (Visual details)"
                         value={formData.description}
@@ -88,7 +96,7 @@ export default function Admin() {
                     <p>
                         <a href={result.visitorUrl} target="_blank" rel="noreferrer">Open Visitor Link</a>
                     </p>
-                    <button onClick={() => { setResult(null); setFile(null); setFormData({ title: '', description: '', facts: '' }); }}>
+                    <button onClick={() => { setResult(null); setFile(null); setFormData({ title: '', slug: '', description: '', facts: '' }); }}>
                         Upload Another
                     </button>
                 </div>

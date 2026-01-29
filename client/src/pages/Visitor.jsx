@@ -1,9 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-export default function Visitor() {
+export default function Visitor({ slugOverride }) {
     const [searchParams] = useSearchParams();
+    // Logic: Look for "id" param OR "slug" param
+    // If neither, we could check window.location.hostname for a subdomain slug
+    // For now, let's look for explicit params
     const paintingId = searchParams.get('id');
+    const paintingSlug = searchParams.get('slug');
+
     const [painting, setPainting] = useState(null);
     const [status, setStatus] = useState('loading'); // loading, ready, connected, error
     const [errorMsg, setErrorMsg] = useState('');
@@ -18,14 +23,46 @@ export default function Visitor() {
     };
 
     useEffect(() => {
-        if (!paintingId) {
-            setStatus('error');
-            setErrorMsg('No painting ID found in URL.');
+        if (slugOverride) {
+            // If subdomain override exists, use it immediately
+            fetch(`${import.meta.env.VITE_API_URL}/api/paintings/slug/${slugOverride}`)
+                .then(res => {
+                    if (!res.ok) throw new Error('Painting not found for subdomain');
+                    return res.json();
+                })
+                .then(data => {
+                    setPainting(data);
+                    setStatus('ready');
+                })
+                .catch(err => {
+                    setStatus('error');
+                    setErrorMsg(err.message);
+                });
             return;
         }
 
+        if (!paintingId && !paintingSlug) {
+            // Optional: fallback to subdomain check
+            // const parts = window.location.hostname.split('.');
+            // if (parts.length > 2) { 
+            //    // e.g. monalisa.art-expert.com -> fetch by slug 'monalisa'
+            // }
+
+            setStatus('error');
+            setErrorMsg('No painting ID or Slug found in URL.');
+            return;
+        }
+
+        // Determine Fetch URL
+        let fetchUrl;
+        if (paintingId) {
+            fetchUrl = `${import.meta.env.VITE_API_URL}/api/paintings/${paintingId}`;
+        } else if (paintingSlug) {
+            fetchUrl = `${import.meta.env.VITE_API_URL}/api/paintings/slug/${paintingSlug}`;
+        }
+
         // Fetch painting details
-        fetch(`${import.meta.env.VITE_API_URL}/api/paintings/${paintingId}`)
+        fetch(fetchUrl)
             .then(res => {
                 if (!res.ok) throw new Error('Painting not found');
                 return res.json();
@@ -43,7 +80,7 @@ export default function Visitor() {
         return () => {
             if (pcRef.current) pcRef.current.close();
         };
-    }, [paintingId]);
+    }, [paintingId, paintingSlug]);
 
     const startConversation = async () => {
         try {

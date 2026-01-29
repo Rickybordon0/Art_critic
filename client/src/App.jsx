@@ -2,7 +2,35 @@ import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import Admin from './pages/Admin';
 import Visitor from './pages/Visitor';
 
+// Helper to get subdomain
+const getSubdomain = () => {
+  const hostname = window.location.hostname; // e.g., monalisa.fondazionerossi.org
+  const parts = hostname.split('.');
+  // Logic depends on environment. 
+  // Localhost (localhost) -> 1 part
+  // Custom Domain (monalisa.fondazionerossi.org) -> 3 parts -> subdomain is parts[0]
+  // Railway (monalisa.up.railway.app) -> 4 parts -> subdomain is parts[0]
+
+  if (parts.length >= 3) {
+    // Exclude common ones if needed, but usually the first part is the subdomain
+    // Warning: www is a subdomain too.
+    if (parts[0] !== 'www' && parts[0] !== 'art-expert-client-ricky') {
+      return parts[0];
+    }
+  }
+  return null;
+};
+
 function App() {
+  const subdomain = getSubdomain();
+
+  // If a subdomain is detected, render ONLY the Visitor page for that slug
+  if (subdomain) {
+    return (
+      <Visitor slugOverride={subdomain} />
+    );
+  }
+
   return (
     <BrowserRouter>
       <nav style={{ padding: '10px', background: '#f0f0f0', marginBottom: '20px' }}>

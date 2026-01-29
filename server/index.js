@@ -49,6 +49,132 @@ const storage = multer.diskStorage({
   }
 });
 
+const upload = multer({ storage: storage });
+
+// Helper to read/write data
+const readData = () => {
+  if (!fs.existsSync(DATA_FILE)) return [];
+  try {
+    const data = fs.readFileSync(DATA_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (err) {
+    return [];
+  }
+};
+
+const writeData = (data) => {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+};
+
+// Initialize OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+// --- Routes ---
+
+// 1. Upload Painting & Create Profile
+app.post('/api/paintings', upload.single('image'), async (req, res) => {
+  try {
+    const { title, description, facts, slug } = req.body;
+    const file = req.file;
+
+    if (!file || !title) {
+      return res.status(400).json({ error: 'Image and Title are required' });
+    }
+
+    const id = uuidv4();
+    const imageUrl = `${process.env.BASE_URL}/uploads/${file.filename}`;
+
+    const systemInstructions = `You are an expert art historian analyzing the painting '${title}'. 
+Here are the key facts about this artwork:
+${facts || 'No specific facts provided.'}
+Description: ${description || ''}
+
+The user is looking at this painting right now. 
+Your goal is to be engaging, educational, and brief. 
+Do not give long lectures. Encourage the user to observe details in the painting.
+Answer any questions they have based on your knowledge and the visual context provided.`;
+
+    const queryParam = slug ? `slug=${slug}` : `id=${id}`;
+    const visitorUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/talk?${queryParam}`;
+
+    const qrCodeDataUrl = await QRCode.toDataURL(visitorUrl);
+
+    const newPainting = {
+      id,
+      slug: slug || null,
+      title,
+      description,
+      facts,
+      imageUrl,
+      systemInstructions,
+      visitorUrl,
+      qrCodeDataUrl,
+      createdAt: new Date().toISOString()
+    };
+
+    const paintings = readData();
+
+    // Check for duplicate slug
+    if (slug && paintings.some(p => p.slug === slug)) {
+      return res.status(400).json({ error: 'Slug already exists' });
+    }
+
+    paintings.push(newPainting);
+    writeData(paintings);
+
+    res.json(newPainting);
+  } catch (error) {
+    console.error('Error creating painting:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// 2. Get Painting Details (for Visitor)
+app.get('/api/paintings/:id', (req, res) => {
+  const paintings = readData();
+  const painting = paintings.find(p => p.id === req.params.id);
+
+  if (!painting) {
+    return res.status(404).json({ error: 'Painting not found' });
+  }
+
+  res.json(painting);
+});
+
+// 2.5 Get Painting by Slug
+app.get('/api/paintings/slug/:slug', (req, res) => {
+  const paintings = readData();
+  const painting = paintings.find(p => p.slug === req.params.slug);
+
+  if (!painting) {
+    return res.status(404).json({ error: 'Painting not found' });
+  }
+
+  res.json(painting);
+});
+
+// 3. Ephemeral Token Exchange (for WebRTC)
+app.get('/api/session', async (req, res) => {
+  try {
+    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.includes('PLACE_YOUR_KEY')) {
+      return res.status(500).json({ error: 'OpenAI API Key is missing on server' });
+    }
+
+    const response = await openai.beta.realtime.sessions.create({
+      model: "gpt-4o-realtime-preview-2024-12-17",
+      voice: "verse",
+    });
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('Error creating OpenAI session:', error);
+    res.status(500).json({ error: 'Failed to create OpenAI session' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
