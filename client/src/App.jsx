@@ -6,14 +6,16 @@ import Visitor from './pages/Visitor';
 const getSubdomain = () => {
   const hostname = window.location.hostname; // e.g., monalisa.fondazionerossi.org
   const parts = hostname.split('.');
-  // Logic depends on environment. 
-  // Localhost (localhost) -> 1 part
-  // Custom Domain (monalisa.fondazionerossi.org) -> 3 parts -> subdomain is parts[0]
-  // Railway (monalisa.up.railway.app) -> 4 parts -> subdomain is parts[0]
+
+  // Railway domains are usually: project-name.up.railway.app (4 parts)
+  // We want to avoid treating 'project-name' as a painting slug.
+
+  // If we are on the main railway app, return null.
+  if (hostname.includes('railway.app')) {
+    return null;
+  }
 
   if (parts.length >= 3) {
-    // Exclude common ones if needed, but usually the first part is the subdomain
-    // Warning: www is a subdomain too.
     if (parts[0] !== 'www' && parts[0] !== 'art-expert-client-ricky') {
       return parts[0];
     }
