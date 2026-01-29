@@ -5,3 +5,8 @@ build/
 .DS_Store
 coverage/
 .vscode/
+
+# Ignore storage directory but keep it in repo structure if we wanted (but we generally ignore data)
+# Depending on preference, we might want to ignore the *contents* but keep the folder.
+# For now, standard ignore:
+server/storage/

@@ -33,6 +33,11 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 // Serve uploads from the new location
 app.use('/uploads', express.static(UPLOADS_DIR));
 
+// Root route for health check
+app.get('/', (req, res) => {
+  res.send('<h1>Art Expert Server is Running</h1><p>Status: Online</p>');
+});
+
 // Configure Multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
