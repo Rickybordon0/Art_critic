@@ -106,7 +106,9 @@ export default function Visitor({ slugOverride }) {
             });
             agentRef.current = agent;
 
-            const session = new RealtimeSession(agent);
+            const session = new RealtimeSession(agent, {
+                model: "gpt-realtime", // Specify the stable realtime model
+            });
             sessionRef.current = session;
 
             // Event Listeners
@@ -184,7 +186,6 @@ export default function Visitor({ slugOverride }) {
             // C. Connect
             await session.connect({
                 apiKey: EPHEMERAL_KEY,
-                model: "gpt-realtime", // Specify the stable realtime model
             });
 
         } catch (err) {
