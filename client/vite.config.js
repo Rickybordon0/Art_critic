@@ -5,6 +5,6 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    allowedHosts: ['art-expert-client-ricky.loca.lt', 'artcriticclient-production.up.railway.app']
+    allowedHosts: ['art-expert-client-ricky.loca.lt', 'artcriticclient-production.up.railway.app', 'fondazionerossi.org']
   },
 })

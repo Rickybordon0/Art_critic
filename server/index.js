@@ -182,14 +182,31 @@ app.put('/api/paintings/:id', upload.single('image'), async (req, res) => {
     const existingPainting = paintings[index];
 
     let imageUrl = existingPainting.imageUrl;
+    let visualAnalysis = null;  // New variable
+
     if (file) {
       imageUrl = `${process.env.BASE_URL}/uploads/${file.filename}`;
+      // Re-analyze if image changed
+      visualAnalysis = await analyzeImage(file.path);
+    } else {
+      // Preserve existing analysis logic if desired, or just don't overwrite if not available.
+      // For simplicity in this edit: if we have old instructions with analysis, we try to keep it, 
+      // or we just define visualAnalysis as null and handle it below.
+      if (existingPainting.systemInstructions && existingPainting.systemInstructions.includes('VISUAL ANALYSIS')) {
+        const parts = existingPainting.systemInstructions.split('VISUAL ANALYSIS (Provided by GPT-4o Vision):');
+        if (parts.length > 1) {
+          visualAnalysis = parts[1].split('The user is looking')[0].trim();
+        }
+      }
     }
 
     const systemInstructions = `You are an expert art historian analyzing the painting '${title}'. 
 Here are the key facts about this artwork:
 ${facts || 'No specific facts provided.'}
 Description: ${description || ''}
+
+${visualAnalysis ? `VISUAL ANALYSIS (Provided by GPT-4o Vision):
+${visualAnalysis}` : ''}
 
 The user is looking at this painting right now. 
 Your goal is to be engaging, educational, and brief. 
