@@ -157,7 +157,11 @@ export default function Visitor({ slugOverride }) {
 
                         addLog(`✓ Image loaded (${format})`);
 
-                        // Send image to model
+                        // Create full data URL (not just base64)
+                        const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
+                        const dataUrl = `data:${mimeType};base64,${base64}`;
+
+                        // Send image to model - Use image_url format, not nested image object
                         dc.send(JSON.stringify({
                             type: 'conversation.item.create',
                             item: {
@@ -170,10 +174,7 @@ export default function Visitor({ slugOverride }) {
                                     },
                                     {
                                         type: 'input_image',
-                                        image: {
-                                            format: format,
-                                            data: base64
-                                        }
+                                        image_url: dataUrl  // Use image_url with full data URL
                                     }
                                 ]
                             }
