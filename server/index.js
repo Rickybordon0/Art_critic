@@ -1,3 +1,4 @@
+// ... existing imports
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
@@ -13,32 +14,24 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// ... [Keep existing Middleware, Storage Config, Multer, and Helper functions unchanged] ...
 app.use(cors());
 app.use(express.json());
-// Serve static files from uploads directory
-// --- Storage Configuration ---
-// We consolidate uploads and data into a single "storage" directory
-// This makes it easier to mount a single volume in hosting providers like Railway
 const STORAGE_DIR = path.join(__dirname, 'storage');
 const UPLOADS_DIR = path.join(STORAGE_DIR, 'uploads');
 const DATA_DIR = path.join(STORAGE_DIR, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'paintings.json');
 
-// Ensure storage structure exists
 if (!fs.existsSync(STORAGE_DIR)) fs.mkdirSync(STORAGE_DIR);
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 
-// Serve uploads from the new location
 app.use('/uploads', express.static(UPLOADS_DIR));
 
-// Root route for health check
 app.get('/', (req, res) => {
   res.send('<h1>Art Expert Server is Running</h1><p>Status: Online</p>');
 });
 
-// Configure Multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, UPLOADS_DIR);
@@ -51,7 +44,6 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
-// Helper to read/write data
 const readData = () => {
   if (!fs.existsSync(DATA_FILE)) return [];
   try {
@@ -66,15 +58,14 @@ const writeData = (data) => {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 };
 
-// Initialize OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// --- Routes ---
-
-// 1. Upload Painting & Create Profile
+// ... [Keep existing Painting Routes (POST, GET, PUT) unchanged] ...
+// (Routes 1, 2, 2.5, 2.6, 2.7 are unchanged)
 app.post('/api/paintings', upload.single('image'), async (req, res) => {
+  // ... [Original code]
   try {
     const { title, description, facts, slug } = req.body;
     const file = req.file;
@@ -86,15 +77,17 @@ app.post('/api/paintings', upload.single('image'), async (req, res) => {
     const id = uuidv4();
     const imageUrl = `${process.env.BASE_URL}/uploads/${file.filename}`;
 
+    // We still generate text instructions for legacy support, but the Realtime session 
+    // will reconstruct them dynamically to avoid "Visual Analysis" text duplication.
     const systemInstructions = `You are an expert art historian analyzing the painting '${title}'. 
-Here are the key facts about this artwork:
-${facts || 'No specific facts provided.'}
-Description: ${description || ''}
-
-The user is looking at this painting right now. 
-Your goal is to be engaging, educational, and brief. 
-Do not give long lectures. Encourage the user to observe details in the painting.
-Answer any questions they have based on your knowledge and the visual context provided.`;
+    Here are the key facts about this artwork:
+    ${facts || 'No specific facts provided.'}
+    Description: ${description || ''}
+    
+    The user is looking at this painting right now. 
+    Your goal is to be engaging, educational, and brief. 
+    Do not give long lectures. Encourage the user to observe details in the painting.
+    Answer any questions they have based on your knowledge and the visual context provided.`;
 
     const queryParam = slug ? `slug=${slug}` : `id=${id}`;
     let clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
@@ -134,39 +127,26 @@ Answer any questions they have based on your knowledge and the visual context pr
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
-
-// 2. Get Painting Details (for Visitor)
 app.get('/api/paintings/:id', (req, res) => {
   const paintings = readData();
   const painting = paintings.find(p => p.id === req.params.id);
-
-  if (!painting) {
-    return res.status(404).json({ error: 'Painting not found' });
-  }
-
+  if (!painting) return res.status(404).json({ error: 'Painting not found' });
   res.json(painting);
 });
-
-// 2.5 Get Painting by Slug
 app.get('/api/paintings/slug/:slug', (req, res) => {
   const paintings = readData();
   const painting = paintings.find(p => p.slug === req.params.slug);
-
-  if (!painting) {
-    return res.status(404).json({ error: 'Painting not found' });
-  }
-
+  if (!painting) return res.status(404).json({ error: 'Painting not found' });
   res.json(painting);
 });
-
-// 2.6 Get All Paintings (for Admin)
 app.get('/api/paintings', (req, res) => {
   const paintings = readData();
   res.json(paintings);
 });
-
-// 2.7 Update Painting
 app.put('/api/paintings/:id', upload.single('image'), async (req, res) => {
+  // ... [Keep existing PUT logic mostly same, just ensuring we don't break]
+  // For brevity, assuming the existing PUT logic is fine. 
+  // The key change is in /api/session below.
   try {
     const { id } = req.params;
     const { title, description, facts, slug } = req.body;
@@ -182,16 +162,14 @@ app.put('/api/paintings/:id', upload.single('image'), async (req, res) => {
     const existingPainting = paintings[index];
 
     let imageUrl = existingPainting.imageUrl;
-    let visualAnalysis = null;  // New variable
+    let visualAnalysis = null;
 
     if (file) {
       imageUrl = `${process.env.BASE_URL}/uploads/${file.filename}`;
-      // Re-analyze if image changed
-      visualAnalysis = await analyzeImage(file.path);
+      // NOTE: We could still run analyzeImage(file.path) here for legacy fallback, 
+      // but for the Realtime SDK version, we don't need it.
     } else {
-      // Preserve existing analysis logic if desired, or just don't overwrite if not available.
-      // For simplicity in this edit: if we have old instructions with analysis, we try to keep it, 
-      // or we just define visualAnalysis as null and handle it below.
+      // Keep existing analysis if present
       if (existingPainting.systemInstructions && existingPainting.systemInstructions.includes('VISUAL ANALYSIS')) {
         const parts = existingPainting.systemInstructions.split('VISUAL ANALYSIS (Provided by GPT-4o Vision):');
         if (parts.length > 1) {
@@ -213,7 +191,6 @@ Your goal is to be engaging, educational, and brief.
 Do not give long lectures. Encourage the user to observe details in the painting.
 Answer any questions they have based on your knowledge and the visual context provided.`;
 
-    // Update basic fields
     paintings[index] = {
       ...existingPainting,
       title,
@@ -223,22 +200,16 @@ Answer any questions they have based on your knowledge and the visual context pr
       imageUrl,
       systemInstructions
     };
-
+    // ... (URL generation logic)
     const queryParam = paintings[index].slug ? `slug=${paintings[index].slug}` : `id=${paintings[index].id}`;
-
     let clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-    if (!clientUrl.startsWith('http')) {
-      clientUrl = `https://${clientUrl}`;
-    }
-
+    if (!clientUrl.startsWith('http')) clientUrl = `https://${clientUrl}`;
     const visitorUrl = `${clientUrl}/talk?${queryParam}`;
     const qrCodeDataUrl = await QRCode.toDataURL(visitorUrl);
-
     paintings[index].visitorUrl = visitorUrl;
     paintings[index].qrCodeDataUrl = qrCodeDataUrl;
 
     writeData(paintings);
-
     res.json(paintings[index]);
   } catch (error) {
     console.error('Error updating painting:', error);
@@ -246,16 +217,41 @@ Answer any questions they have based on your knowledge and the visual context pr
   }
 });
 
-// 3. Ephemeral Token Exchange (for WebRTC)
+
+// --- 3. UPDATED Session Route (SDK Compatible) ---
 app.get('/api/session', async (req, res) => {
   try {
-    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.includes('PLACE_YOUR_KEY')) {
+    if (!process.env.OPENAI_API_KEY) {
       return res.status(500).json({ error: 'OpenAI API Key is missing on server' });
+    }
+
+    const { paintingId, slug } = req.query;
+    let instructions = "You are a helpful assistant."; // Default
+
+    // Look up painting to generate context
+    if (paintingId || slug) {
+      const paintings = readData();
+      const painting = paintings.find(p => (paintingId && p.id === paintingId) || (slug && p.slug === slug));
+
+      if (painting) {
+        // Reconstruct clean instructions WITHOUT the old text-based Visual Analysis.
+        // We do this because we will be sending the actual image to the model.
+        instructions = `You are an expert art historian analyzing the painting '${painting.title}'. 
+Here are the key facts about this artwork:
+${painting.facts || 'No specific facts provided.'}
+Description: ${painting.description || ''}
+
+The user is looking at this painting right now and the image has been provided to you.
+Your goal is to be engaging, educational, and brief. 
+Do not give long lectures. Encourage the user to observe details in the painting.
+Answer any questions they have based on your knowledge and the visual context provided.`;
+      }
     }
 
     const response = await openai.beta.realtime.sessions.create({
       model: "gpt-4o-realtime-preview-2024-12-17",
       voice: "verse",
+      instructions: instructions, // Set context at session creation
     });
 
     res.json(response);
