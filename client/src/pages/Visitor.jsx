@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { RealtimeAgent, RealtimeSession } from "@openai/agents-realtime";
 
 export default function Visitor({ slugOverride }) {
     const [searchParams] = useSearchParams();
@@ -8,20 +7,20 @@ export default function Visitor({ slugOverride }) {
     const paintingSlug = searchParams.get('slug');
 
     const [painting, setPainting] = useState(null);
-    const [status, setStatus] = useState('loading'); // loading, ready, connected, error
+    const [status, setStatus] = useState('loading'); // loading, ready, connecting, connected, error
     const [errorMsg, setErrorMsg] = useState('');
     const [logs, setLogs] = useState([]);
 
-    // Refs to hold SDK instances
-    const sessionRef = useRef(null);
-    const agentRef = useRef(null);
+    const pcRef = useRef(null);
+    const dcRef = useRef(null);
+    const audioRef = useRef(null);
 
     const addLog = (msg) => {
         console.log(msg);
         setLogs(prev => [...prev, `${new Date().toLocaleTimeString()} - ${msg}`]);
     };
 
-    // 1. Fetch Painting Details
+    // Fetch Painting Details
     useEffect(() => {
         if (slugOverride) {
             fetchPainting(`${import.meta.env.VITE_API_URL}/api/paintings/slug/${slugOverride}`);
@@ -44,7 +43,7 @@ export default function Visitor({ slugOverride }) {
         fetchPainting(fetchUrl);
 
         return () => {
-            if (sessionRef.current) sessionRef.current.close();
+            if (pcRef.current) pcRef.current.close();
         };
     }, [paintingId, paintingSlug, slugOverride]);
 
@@ -64,31 +63,14 @@ export default function Visitor({ slugOverride }) {
             });
     };
 
-    // 2. Helper to convert image URL to Base64
-    const urlToBase64 = async (url) => {
-        const response = await fetch(url);
-        const blob = await response.blob();
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                // Remove the "data:image/jpeg;base64," prefix
-                const base64 = reader.result.split(',')[1];
-                resolve(base64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
-    };
-
-    // 3. Start Conversation using SDK
     const startConversation = async () => {
         try {
             setStatus('connecting');
-            addLog('Starting connection flow...');
+            addLog('Starting WebRTC connection...');
 
-            // A. Get Ephemeral Token
-            // We pass the painting ID/slug so the server can inject the correct system instructions
-            const queryParam = painting.slug ? `slug=${painting.slug}` : `id=${painting.id}`;
+            // 1. Get ephemeral token from server
+            const queryParam = painting.slug ? `slug=${painting.slug}` : `paintingId=${painting.id}`;
+            addLog('Requesting ephemeral token...');
             const tokenRes = await fetch(`${import.meta.env.VITE_API_URL}/api/session?${queryParam}`);
             const tokenData = await tokenRes.json();
 
@@ -96,99 +78,168 @@ export default function Visitor({ slugOverride }) {
                 throw new Error('Failed to get ephemeral token');
             }
             const EPHEMERAL_KEY = tokenData.client_secret.value;
-            addLog('Ephemeral token received.');
+            addLog('✓ Ephemeral token received');
 
-            // B. Initialize SDK
-            const agent = new RealtimeAgent({
-                name: "Art Critic",
-                // Instructions are already set on the server session, 
-                // but we can add client-side tools here if needed.
-            });
-            agentRef.current = agent;
+            // 2. Setup WebRTC Peer Connection
+            const pc = new RTCPeerConnection();
+            pcRef.current = pc;
 
-            // Model is already configured server-side when creating the ephemeral token
-            const session = new RealtimeSession(agent);
-            sessionRef.current = session;
+            // Event handlers
+            pc.oniceconnectionstatechange = () => addLog(`ICE State: ${pc.iceConnectionState}`);
+            pc.onconnectionstatechange = () => {
+                addLog(`Connection State: ${pc.connectionState}`);
+                if (pc.connectionState === 'connected') {
+                    setStatus('connected');
+                }
+            };
 
-            // Event Listeners
-            session.on("error", (event) => {
-                addLog(`SDK Error: ${JSON.stringify(event)}`);
-            });
+            // Handle incoming audio
+            pc.ontrack = (event) => {
+                addLog('✓ Received remote audio track');
+                const audioEl = audioRef.current;
+                if (audioEl && event.streams[0]) {
+                    audioEl.srcObject = event.streams[0];
+                    audioEl.play().catch(e => addLog(`Audio play error: ${e.message}`));
+                }
+            };
 
-            session.on("connected", async () => {
-                addLog("SDK Connected!");
-                setStatus('connected');
+            // 3. Get user's microphone
+            addLog('Requesting microphone access...');
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            addLog('✓ Microphone access granted');
 
-                // Update session with painting context
-                addLog('Sending session update with instructions and voice...');
-                await session.update({
-                    instructions: painting.systemInstructions,
-                    voice: "alloy",
-                    modalities: ["text", "audio"]
-                });
-                addLog('Session instructions and voice sent.');
+            // Add microphone track to peer connection
+            stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
-                // Send Image (Vision)
+            // 4. Create data channel for events
+            const dc = pc.createDataChannel('oai-events');
+            dcRef.current = dc;
+
+            dc.onopen = async () => {
+                addLog('✓ Data channel opened');
+
+                // Send session update with instructions
+                addLog('Sending session instructions...');
+                dc.send(JSON.stringify({
+                    type: 'session.update',
+                    session: {
+                        modalities: ['text', 'audio'],
+                        instructions: painting.systemInstructions,
+                        voice: 'alloy',
+                        input_audio_format: 'pcm16',
+                        output_audio_format: 'pcm16',
+                        turn_detection: {
+                            type: 'server_vad',
+                            threshold: 0.5,
+                            prefix_padding_ms: 300,
+                            silence_duration_ms: 200
+                        }
+                    }
+                }));
+
+                // Send the painting image
                 if (painting.imageUrl) {
-                    addLog('Fetching and processing image for vision...');
+                    addLog('Fetching painting image...');
                     try {
                         const imgRes = await fetch(painting.imageUrl);
                         const blob = await imgRes.blob();
 
-                        let imageFormat = 'jpeg'; // Default format
-                        if (blob.type === 'image/png') {
-                            imageFormat = 'png';
-                        } else if (blob.type === 'image/jpeg' || blob.type === 'image/jpg') {
-                            imageFormat = 'jpeg';
-                        }
+                        // Detect format
+                        let format = 'jpeg';
+                        if (blob.type === 'image/png') format = 'png';
 
-                        const base64Image = await new Promise((resolve, reject) => {
+                        // Convert to base64
+                        const base64 = await new Promise((resolve) => {
                             const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result.split(',')[1]); // remove data:image/... prefix
-                            reader.onerror = reject;
+                            reader.onloadend = () => resolve(reader.result.split(',')[1]);
                             reader.readAsDataURL(blob);
                         });
-                        addLog(`Image converted to Base64 (${imageFormat} format).`);
 
-                        addLog('Sending initial message with image to model...');
-                        await session.sendMessage({
-                            role: "user",
-                            type: "message",
-                            content: [
-                                {
-                                    type: "input_text",
-                                    text: "I'm looking at this painting. Please help me understand it."
-                                },
-                                {
-                                    type: "input_image",
-                                    image: {
-                                        format: imageFormat,
-                                        data: base64Image
+                        addLog(`✓ Image loaded (${format})`);
+
+                        // Send image to model
+                        dc.send(JSON.stringify({
+                            type: 'conversation.item.create',
+                            item: {
+                                type: 'message',
+                                role: 'user',
+                                content: [
+                                    {
+                                        type: 'input_text',
+                                        text: "Here is the painting I'm looking at. Please help me understand it."
+                                    },
+                                    {
+                                        type: 'input_image',
+                                        image: {
+                                            format: format,
+                                            data: base64
+                                        }
                                     }
-                                }
-                            ]
-                        });
-                        addLog('Initial message with image sent!');
-                    } catch (imgErr) {
-                        addLog(`Failed to process or send image: ${imgErr.message}`);
+                                ]
+                            }
+                        }));
+
+                        addLog('✓ Image sent to model');
+
+                        // Request a response
+                        dc.send(JSON.stringify({ type: 'response.create' }));
+                        addLog('✓ Requested initial response');
+
+                    } catch (e) {
+                        addLog(`Image error: ${e.message}`);
                     }
-                } else {
-                    addLog('No image URL available for vision.');
                 }
+            };
+
+            dc.onmessage = (e) => {
+                try {
+                    const msg = JSON.parse(e.data);
+                    // Log important events, skip audio deltas
+                    if (!msg.type.includes('audio.delta') && !msg.type.includes('audio_transcript.delta')) {
+                        addLog(`Event: ${msg.type}`);
+                    }
+                } catch (err) {
+                    // Ignore parse errors
+                }
+            };
+
+            dc.onerror = (e) => addLog(`Data channel error: ${e}`);
+            dc.onclose = () => addLog('Data channel closed');
+
+            // 5. Create and send offer
+            addLog('Creating SDP offer...');
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            // 6. Send offer to OpenAI and get answer
+            addLog('Sending offer to OpenAI...');
+            const sdpResponse = await fetch('https://api.openai.com/v1/realtime?model=gpt-realtime', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${EPHEMERAL_KEY}`,
+                    'Content-Type': 'application/sdp'
+                },
+                body: offer.sdp
             });
 
-            session.on("disconnected", () => {
-                addLog("SDK Disconnected");
-                setStatus('ready');
+            if (!sdpResponse.ok) {
+                const errorText = await sdpResponse.text();
+                throw new Error(`SDP exchange failed: ${sdpResponse.status} - ${errorText}`);
+            }
+
+            const answerSdp = await sdpResponse.text();
+            addLog('✓ Received SDP answer from OpenAI');
+
+            // 7. Set remote description
+            await pc.setRemoteDescription({
+                type: 'answer',
+                sdp: answerSdp
             });
 
-            // C. Connect
-            await session.connect({
-                apiKey: EPHEMERAL_KEY,
-            });
+            addLog('✓ WebRTC connection established!');
 
         } catch (err) {
-            console.error(err);
+            console.error('Connection error:', err);
             addLog(`ERROR: ${err.message}`);
             setStatus('error');
             setErrorMsg(err.message);
@@ -196,11 +247,16 @@ export default function Visitor({ slugOverride }) {
     };
 
     const stopConversation = () => {
-        if (sessionRef.current) {
-            sessionRef.current.close();
-            sessionRef.current = null;
-            setStatus('ready');
+        if (pcRef.current) {
+            pcRef.current.close();
+            pcRef.current = null;
         }
+        if (dcRef.current) {
+            dcRef.current.close();
+            dcRef.current = null;
+        }
+        setStatus('ready');
+        addLog('Connection closed');
     };
 
     if (status === 'loading') return <div>Loading painting...</div>;
@@ -251,16 +307,19 @@ export default function Visitor({ slugOverride }) {
                             background: '#dc3545',
                             color: 'white',
                             border: 'none',
-                            borderRadius: '50px',
+                            borderRadius: '25px',
                             cursor: 'pointer'
                         }}
                     >
-                        End Call
+                        End Conversation
                     </button>
                 </div>
             )}
 
-            {/* Visual Debug Log */}
+            {/* Audio element for AI responses */}
+            <audio ref={audioRef} autoPlay style={{ display: 'none' }} />
+
+            {/* Debug Log */}
             <div style={{
                 marginTop: '30px',
                 textAlign: 'left',
@@ -273,7 +332,7 @@ export default function Visitor({ slugOverride }) {
                 overflowY: 'scroll'
             }}>
                 <strong>Debug Logs:</strong>
-                {logs.map((L, i) => <div key={i}>{L}</div>)}
+                {logs.map((log, i) => <div key={i}>{log}</div>)}
             </div>
         </div>
     );
