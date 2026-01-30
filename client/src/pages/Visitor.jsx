@@ -184,6 +184,7 @@ export default function Visitor({ slugOverride }) {
             // C. Connect
             await session.connect({
                 apiKey: EPHEMERAL_KEY,
+                model: "gpt-realtime", // Specify the stable realtime model
             });
 
         } catch (err) {
