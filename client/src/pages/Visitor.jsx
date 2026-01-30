@@ -106,9 +106,8 @@ export default function Visitor({ slugOverride }) {
             });
             agentRef.current = agent;
 
-            const session = new RealtimeSession(agent, {
-                model: "gpt-realtime", // Specify the stable realtime model
-            });
+            // Model is already configured server-side when creating the ephemeral token
+            const session = new RealtimeSession(agent);
             sessionRef.current = session;
 
             // Event Listeners
