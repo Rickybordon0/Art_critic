@@ -97,7 +97,11 @@ Do not give long lectures. Encourage the user to observe details in the painting
 Answer any questions they have based on your knowledge and the visual context provided.`;
 
     const queryParam = slug ? `slug=${slug}` : `id=${id}`;
-    const visitorUrl = `${process.env.CLIENT_URL || 'http://localhost:5173'}/talk?${queryParam}`;
+    let clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    if (!clientUrl.startsWith('http')) {
+      clientUrl = `https://${clientUrl}`;
+    }
+    const visitorUrl = `${clientUrl}/talk?${queryParam}`;
 
     const qrCodeDataUrl = await QRCode.toDataURL(visitorUrl);
 
@@ -153,6 +157,76 @@ app.get('/api/paintings/slug/:slug', (req, res) => {
   }
 
   res.json(painting);
+});
+
+// 2.6 Get All Paintings (for Admin)
+app.get('/api/paintings', (req, res) => {
+  const paintings = readData();
+  res.json(paintings);
+});
+
+// 2.7 Update Painting
+app.put('/api/paintings/:id', upload.single('image'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, facts, slug } = req.body;
+    const file = req.file;
+
+    const paintings = readData();
+    const index = paintings.findIndex(p => p.id === id);
+
+    if (index === -1) {
+      return res.status(404).json({ error: 'Painting not found' });
+    }
+
+    const existingPainting = paintings[index];
+
+    let imageUrl = existingPainting.imageUrl;
+    if (file) {
+      imageUrl = `${process.env.BASE_URL}/uploads/${file.filename}`;
+    }
+
+    const systemInstructions = `You are an expert art historian analyzing the painting '${title}'. 
+Here are the key facts about this artwork:
+${facts || 'No specific facts provided.'}
+Description: ${description || ''}
+
+The user is looking at this painting right now. 
+Your goal is to be engaging, educational, and brief. 
+Do not give long lectures. Encourage the user to observe details in the painting.
+Answer any questions they have based on your knowledge and the visual context provided.`;
+
+    // Update basic fields
+    paintings[index] = {
+      ...existingPainting,
+      title,
+      slug: slug || existingPainting.slug,
+      description,
+      facts,
+      imageUrl,
+      systemInstructions
+    };
+
+    const queryParam = paintings[index].slug ? `slug=${paintings[index].slug}` : `id=${paintings[index].id}`;
+
+    let clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    if (!clientUrl.startsWith('http')) {
+      clientUrl = `https://${clientUrl}`;
+    }
+
+    const visitorUrl = `${clientUrl}/talk?${queryParam}`;
+    const qrCodeDataUrl = await QRCode.toDataURL(visitorUrl);
+
+    paintings[index].visitorUrl = visitorUrl;
+    paintings[index].qrCodeDataUrl = qrCodeDataUrl;
+
+    writeData(paintings);
+
+    res.json(paintings[index]);
+  } catch (error) {
+    console.error('Error updating painting:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
 // 3. Ephemeral Token Exchange (for WebRTC)
