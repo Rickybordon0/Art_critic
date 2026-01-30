@@ -115,6 +115,9 @@ export default function Visitor({ slugOverride }) {
             const dc = pc.createDataChannel('oai-events');
             dcRef.current = dc;
 
+            let sessionReady = false;
+            let imageData = null;
+
             dc.onopen = async () => {
                 addLog('✓ Data channel opened');
 
@@ -137,54 +140,48 @@ export default function Visitor({ slugOverride }) {
                     }
                 }));
 
-                // Send the painting image
+                // Prepare the painting image in parallel
                 if (painting.imageUrl) {
                     addLog('Fetching painting image...');
                     try {
                         const imgRes = await fetch(painting.imageUrl);
                         const blob = await imgRes.blob();
 
-                        // Detect format
-                        let format = 'jpeg';
-                        if (blob.type === 'image/png') format = 'png';
+                        // Compress/resize image if needed (max ~500KB base64 = ~375KB raw)
+                        const img = document.createElement('img');
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
 
-                        // Convert to base64
-                        const base64 = await new Promise((resolve) => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result.split(',')[1]);
-                            reader.readAsDataURL(blob);
-                        });
+                        await new Promise((resolve, reject) => {
+                            img.onload = () => {
+                                // Resize if too large (max 1024px)
+                                let width = img.width;
+                                let height = img.height;
+                                const maxDim = 1024;
 
-                        addLog(`✓ Image loaded (${format})`);
-
-                        // Create full data URL (not just base64)
-                        const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
-                        const dataUrl = `data:${mimeType};base64,${base64}`;
-
-                        // Send image to model - Use image_url format, not nested image object
-                        dc.send(JSON.stringify({
-                            type: 'conversation.item.create',
-                            item: {
-                                type: 'message',
-                                role: 'user',
-                                content: [
-                                    {
-                                        type: 'input_text',
-                                        text: "Here is the painting I'm looking at. Please help me understand it."
-                                    },
-                                    {
-                                        type: 'input_image',
-                                        image_url: dataUrl  // Use image_url with full data URL
+                                if (width > maxDim || height > maxDim) {
+                                    if (width > height) {
+                                        height = (height / width) * maxDim;
+                                        width = maxDim;
+                                    } else {
+                                        width = (width / height) * maxDim;
+                                        height = maxDim;
                                     }
-                                ]
-                            }
-                        }));
+                                }
 
-                        addLog('✓ Image sent to model');
+                                canvas.width = width;
+                                canvas.height = height;
+                                ctx.drawImage(img, 0, 0, width, height);
 
-                        // Request a response
-                        dc.send(JSON.stringify({ type: 'response.create' }));
-                        addLog('✓ Requested initial response');
+                                // Convert to JPEG with compression
+                                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                                imageData = dataUrl;
+                                addLog(`✓ Image loaded and compressed (${width}x${height})`);
+                                resolve();
+                            };
+                            img.onerror = reject;
+                            img.src = URL.createObjectURL(blob);
+                        });
 
                     } catch (e) {
                         addLog(`Image error: ${e.message}`);
@@ -201,6 +198,41 @@ export default function Visitor({ slugOverride }) {
                         // If it's an error, log the full details
                         if (msg.type === 'error') {
                             addLog(`ERROR DETAILS: ${JSON.stringify(msg.error || msg)}`);
+                        }
+
+                        // Wait for session.updated before sending image
+                        if (msg.type === 'session.updated' && !sessionReady) {
+                            sessionReady = true;
+                            addLog('Session confirmed ready');
+
+                            // Now send the image if we have it
+                            if (imageData) {
+                                setTimeout(() => {
+                                    addLog('Sending image to model...');
+                                    dc.send(JSON.stringify({
+                                        type: 'conversation.item.create',
+                                        item: {
+                                            type: 'message',
+                                            role: 'user',
+                                            content: [
+                                                {
+                                                    type: 'input_text',
+                                                    text: "Here is the painting I'm looking at. Please help me understand it."
+                                                },
+                                                {
+                                                    type: 'input_image',
+                                                    image_url: imageData
+                                                }
+                                            ]
+                                        }
+                                    }));
+                                    addLog('✓ Image sent to model');
+
+                                    // Request a response
+                                    dc.send(JSON.stringify({ type: 'response.create' }));
+                                    addLog('✓ Requested initial response');
+                                }, 500); // Small delay to ensure session is fully ready
+                            }
                         }
                     }
                 } catch (err) {
