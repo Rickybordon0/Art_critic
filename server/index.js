@@ -249,7 +249,7 @@ Answer any questions they have based on your knowledge and the visual context pr
     }
 
     const response = await openai.beta.realtime.sessions.create({
-      model: "gpt-4o-realtime-preview-2024-12-17",
+      model: "gpt-realtime",
       voice: "verse",
       instructions: instructions, // Set context at session creation
     });
