@@ -198,13 +198,20 @@ export default function Visitor({ slugOverride }) {
                     // Log important events, skip audio deltas
                     if (!msg.type.includes('audio.delta') && !msg.type.includes('audio_transcript.delta')) {
                         addLog(`Event: ${msg.type}`);
+                        // If it's an error, log the full details
+                        if (msg.type === 'error') {
+                            addLog(`ERROR DETAILS: ${JSON.stringify(msg.error || msg)}`);
+                        }
                     }
                 } catch (err) {
                     // Ignore parse errors
                 }
             };
 
-            dc.onerror = (e) => addLog(`Data channel error: ${e}`);
+            dc.onerror = (e) => {
+                addLog(`Data channel error: ${e.type} - ${e.error?.message || 'Unknown error'}`);
+                console.error('Full data channel error:', e);
+            };
             dc.onclose = () => addLog('Data channel closed');
 
             // 5. Create and send offer
